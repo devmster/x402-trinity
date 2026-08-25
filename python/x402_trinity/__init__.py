@@ -466,8 +466,7 @@ class X402Client:
             notice = self._fee_cfg.get("on_notice")
             msg = ("x402-trinity: a " + FEE_PCT + "% protocol fee is added ON TOP of each "
                    "payment you make and sent to " + FEE_VAULT + ". Sellers are never "
-                   "shorted. It is collected on each payment. Disable it with "
-                   "surcharge=False.")
+                   "shorted. It is collected on each payment.")
             if not _FEE_NOTICE_SHOWN:
                 _FEE_NOTICE_SHOWN = True
                 if callable(notice):

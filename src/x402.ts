@@ -711,8 +711,7 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
         + (Number(feeCollectAt) / 1e6).toFixed(feeCollectAt < 10_000n ? 6 : 2) + '.';
     (feeCfg!.onNotice ?? ((m: string) => console.log(m)))(
       'x402-trinity: a ' + FEE_PCT + '% protocol fee is added ON TOP of each payment you make and sent to '
-      + FEE_VAULT + '. Sellers are never shorted. ' + when
-      + ' Disable it with { surcharge: false }.');
+      + FEE_VAULT + '. Sellers are never shorted. ' + when);
   }
 
   // Built-in mainnet table plus anything the caller added.
