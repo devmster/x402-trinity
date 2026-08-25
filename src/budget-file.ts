@@ -90,22 +90,27 @@ export function createFileBudgetStore(path: string, opts: { lockTimeoutMs?: numb
 
 
 /**
- * File-backed fee tally for the surcharge module. Node-only, same atomic-rename pattern.
- * Values are ATOMIC x 1e6 so sub-unit fees accrue without rounding loss.
+ * File-backed fee tally. Node-only, same atomic-rename pattern. `accrued` is ATOMIC x 1e6
+ * so sub-unit fees are not rounded away; `count` is payments since the last settlement.
  */
 export function createFileFeeStore(path: string) {
   return {
-    get: async (): Promise<bigint> => {
-      if (!existsSync(path)) return 0n;
-      try { return BigInt(JSON.parse(readFileSync(path, 'utf8')).accruedScaled ?? '0'); }
-      catch {
+    get: async (): Promise<{ accrued: bigint; count: bigint }> => {
+      if (!existsSync(path)) return { accrued: 0n, count: 0n };
+      try {
+        const j = JSON.parse(readFileSync(path, 'utf8'));
+        return { accrued: BigInt(j.accruedScaled ?? '0'), count: BigInt(j.count ?? '0') };
+      } catch {
         // Never read a corrupt tally as zero - that silently discards fees already owed.
         throw new Error(`x402 fee tally is unreadable: ${path}. Refusing to treat it as zero.`);
       }
     },
-    set: async (scaled: bigint): Promise<void> => {
+    set: async (v: { accrued: bigint; count: bigint }): Promise<void> => {
       const tmp = path + '.tmp';
-      writeFileSync(tmp, JSON.stringify({ accruedScaled: scaled.toString(), updated: new Date().toISOString() }));
+      writeFileSync(tmp, JSON.stringify({
+        accruedScaled: v.accrued.toString(), count: v.count.toString(),
+        updated: new Date().toISOString(),
+      }));
       renameSync(tmp, path);
     },
   };

@@ -106,3 +106,39 @@ class FileBudgetStore:
 
     def spent(self) -> int:
         return self._read()
+
+
+class FileFeeStore(FileBudgetStore):
+    """
+    Durable tally for the protocol fee. `accrued` is the percentage owed, scaled by 1e6 so
+    sub-unit fees are not rounded away; `count` is payments since the last settlement.
+    Reuses the budget store's lock and atomic-rename write, because the failure mode is
+    identical: a torn or lost write here silently discards money already owed.
+
+    Both charges are settled together on the hundredth payment, which only works if the
+    counter outlives the process. That is the entire reason this class exists.
+    """
+
+    def _read_pair(self):
+        import json as _json, os as _os
+        if not _os.path.exists(self.path):
+            return {"accrued": 0, "count": 0}
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                j = _json.load(f)
+            return {"accrued": int(j.get("accrued", 0)), "count": int(j.get("count", 0))}
+        except Exception:
+            # Never read a corrupt tally as zero - that silently discards fees already owed.
+            raise BudgetError("x402 fee tally is unreadable: %s. Refusing to treat it as zero." % self.path)
+
+    def get(self) -> dict:
+        with self._Lock(self):
+            return self._read_pair()
+
+    def set(self, v: dict) -> None:
+        import json as _json, os as _os
+        with self._Lock(self):
+            tmp = self.path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                _json.dump({"accrued": int(v["accrued"]), "count": int(v["count"])}, f)
+            _os.replace(tmp, self.path)

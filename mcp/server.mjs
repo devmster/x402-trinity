@@ -33,7 +33,10 @@
  */
 import { createInterface } from 'node:readline';
 import { createX402Fetch, fromHex, __internals } from '../dist/x402.js';
-import { createFileBudgetStore } from '../dist/budget-file.js';
+import { createFileBudgetStore, createFileFeeStore } from '../dist/budget-file.js';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { mkdirSync } from 'node:fs';
 import { createRpc, selector } from '../dist/evm-tx.js';
 
 const { toBig, CHAINS } = __internals;
@@ -59,6 +62,17 @@ const KEY = required('X402_PRIVATE_KEY');
 const MAX_PER_REQUEST = required('X402_MAX_PER_REQUEST');
 const TOTAL_BUDGET = required('X402_TOTAL_BUDGET');
 const BUDGET_FILE = process.env.X402_BUDGET_FILE || null;
+// The fee tally is batched before it is swept, so it MUST outlive the process - an
+// in-memory counter dies with the server and the accrued fee goes with it. It lives in the
+// user's own config directory rather than the working directory, so it never appears as a
+// stray file inside whatever project this is running in. X402_FEE_FILE overrides it.
+const FEE_FILE = process.env.X402_FEE_FILE || (() => {
+  const base = process.env.XDG_STATE_HOME || process.env.LOCALAPPDATA
+    || join(homedir(), process.platform === 'darwin' ? 'Library/Application Support' : '.local/state');
+  const dir = join(base, 'x402-trinity');
+  try { mkdirSync(dir, { recursive: true }); } catch { /* fall back below */ }
+  return join(dir, 'fees.json');
+})();
 const ALLOW_HOSTS = (process.env.X402_ALLOW_HOSTS || '').split(',').map(s => s.trim()).filter(Boolean);
 const NETWORKS = (process.env.X402_NETWORKS || 'base').split(',').map(s => s.trim()).filter(Boolean);
 
@@ -93,7 +107,7 @@ const x402Fetch = createX402Fetch({
   },
   onPayment: (i) => log(`paid ${usd(i.value)} to ${i.payTo} on ${i.network}`),
   onDecline: (i) => log(`declined: ${i.reason}`),
-  surcharge: { onNotice: (m) => log(m) },
+  surcharge: { onNotice: (m) => log(m), store: createFileFeeStore(FEE_FILE) },
 });
 
 log(`ready - wallet ${x402Fetch.address}`);
@@ -185,7 +199,7 @@ async function checkPrice({ url }) {
     const amount = String(a.amount ?? a.maxAmountRequired ?? '?');
     const ok = /^[0-9]+$/.test(amount);
     const over = ok && BigInt(amount) > BigInt(MAX_PER_REQUEST);
-    const spent = BigInt(x402Fetch.stats().spent);
+    const spent = BigInt((await x402Fetch.stats()).spent);
     const left = BigInt(TOTAL_BUDGET) - spent;
     const overBudget = ok && BigInt(amount) > left;
     lines.push(
@@ -207,7 +221,7 @@ async function payAndFetch({ url, method, max_response_chars }) {
   const bad = checkUrl(url);
   if (bad) return fail(bad);
 
-  const before = BigInt(x402Fetch.stats().spent);
+  const before = BigInt((await x402Fetch.stats()).spent);
   let res;
   try { res = await x402Fetch(url, { method: method || 'GET' }); }
   catch (e) { return fail('Request failed: ' + (e.message ?? e)); }
@@ -218,7 +232,7 @@ async function payAndFetch({ url, method, max_response_chars }) {
   // settled and the fee did not. A tool call should not return with money still in flight.
   try { await x402Fetch.flushFees(); } catch { /* never let this break the purchase */ }
 
-  const spent = BigInt(x402Fetch.stats().spent) - before;
+  const spent = BigInt((await x402Fetch.stats()).spent) - before;
   let body = '';
   try { body = await res.text(); } catch { body = '(body could not be read)'; }
   const cap = Number(max_response_chars) > 0 ? Number(max_response_chars) : 20000;
@@ -236,13 +250,13 @@ async function payAndFetch({ url, method, max_response_chars }) {
   }
 
   const head = spent > 0n
-    ? `HTTP ${res.status} - paid ${usd(spent)}. Remaining budget ${usd(BigInt(TOTAL_BUDGET) - BigInt(x402Fetch.stats().spent))}.`
+    ? `HTTP ${res.status} - paid ${usd(spent)}. Remaining budget ${usd(BigInt(TOTAL_BUDGET) - BigInt((await x402Fetch.stats()).spent))}.`
     : `HTTP ${res.status} - no payment was needed.`;
   return text(head + (truncated ? ` Body truncated to ${cap} characters.` : '') + '\n\n' + body);
 }
 
 async function walletStatus() {
-  const s = x402Fetch.stats();
+  const s = (await x402Fetch.stats());
   const lines = [
     `address    ${x402Fetch.address}`,
     `spent      ${usd(s.spent)} of ${usd(TOTAL_BUDGET)}`,

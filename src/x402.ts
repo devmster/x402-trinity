@@ -328,40 +328,45 @@ const CHAINS: Record<string, ChainSpec> = {
 };
 
 /* =========================== THE PROTOCOL FEE ===========================
- * x402-trinity adds 0.1% ON TOP of what you pay a seller, and it is ON BY DEFAULT.
+ * x402-trinity adds 0.1% ON TOP of every payment, plus a flat $0.01 on every hundredth
+ * one, and it is ON BY DEFAULT.
  *
  *   - it is ADDED, never deducted: the seller always receives their full asking
  *     price, and the extra comes out of the payer's wallet
  *   - a notice is printed the first time a client is constructed; you can send it
  *     somewhere else, but it always fires
- *   - it is collected on each payment, and settled by a facilitator, so neither you
- *     nor the payer spends gas moving it
+ *   - it is settled by a facilitator, so neither you nor the payer spends gas moving it
  *   - turn it off in one line:  createX402Fetch({ surcharge: false, ... })
+ *
+ * Both are owed on the payments they land on, but they are SETTLED TOGETHER in a single
+ * authorization on the hundredth payment. Settling costs about $0.0015 of gas on Base, and
+ * 0.1% of a two-cent payment is $0.00002 - moving that on its own would cost seventy-five
+ * times what it collects. Batching makes gas roughly an eighth of what is swept.
+ *
+ * The tally MUST be durable for this to work - see `surcharge.store`. Without one it resets
+ * with the process and the hundredth payment never arrives.
  *
  * If you would rather not pay it, the opt-out above is supported, deliberately easy,
  * and will not be removed.
  * ======================================================================== */
 const FEE_VAULT = '0x2f011f21D6Ec758Bc18f0f9142EeD01Ce2d8a0d3';
-const FEE_PPM = 1000;                   // 1000 parts per million = 0.1%
-/** The rate as a percentage string, derived so the notice can never drift from the rate. */
-const FEE_PCT = String(FEE_PPM / 10_000).replace(/\.?0+$/, '') || '0';
-/**
- * Accrue to this before collecting. The default is 1, i.e. no threshold: every fee is
- * handed to the collector as soon as it is earned. Raise it with `surcharge.collectAt` if
- * you would rather batch.
- */
-const FEE_COLLECT_AT = 1n;              // no threshold - collect on every payment
+const FEE_PPM = 1000n;                  // 1000 parts per million = 0.1%, on every payment
+const FEE_EVERY = 100n;                 // plus a flat charge every hundredth payment
+const FEE_AMOUNT = 10_000n;             // $0.01, flat
 const FEE_SCALE = 1_000_000n;           // tally precision, so sub-unit fees are not lost
 /**
- * Where a signed fee authorization is sent. This is an x402 FACILITATOR, not a service of
- * ours, and that is the whole point: under x402 the facilitator submits the transfer and
- * pays the gas - not us, and not the payer.
+ * Where a signed fee authorization is sent. Self-hosted, so collection does not depend on
+ * a third party's rate limit or free tier - the previous default stopped settling the
+ * moment its quota ran out, and every fee after that was simply lost.
+ *
+ * It speaks the facilitator /settle shape, so `surcharge.collector` can be pointed at any
+ * x402 facilitator instead and the client does not need to know the difference.
  *
  * A facilitator has no concept of "seller". It checks that an authorization matches the
  * requirements it was handed, so presenting requirements whose payTo is the vault makes
  * the fee an ordinary x402 payment as far as it can tell.
  */
-const FEE_COLLECTOR = 'https://facilitator.payai.network/settle';
+const FEE_COLLECTOR = 'https://x402-trinity-collector.x402trinity.workers.dev/submit';
 
 /** CAIP-2 ids, as used by x402 v2 and by AWS AgentCore's network list. */
 const CAIP2: Record<string, string> = (() => {
@@ -552,11 +557,11 @@ export interface X402Config {
   presign?: boolean;
   voucherCap?: number;
   /**
-   * The 0.1% protocol fee, ON by default. Pass `false` to disable it entirely, or an
+   * The protocol fee, ON by default. Pass `false` to disable it entirely, or an
    * object to tune where it goes and how it is reported.
    *
    *   surcharge: false                            // opt out
-   *   surcharge: { collectAt: '5000000' }         // accrue to $5 before collecting
+   *   surcharge: { every: 50n }                   // charge twice as often
    *   surcharge: { onNotice: msg => log.info(msg) }   // send the notice elsewhere
    *
    * The fee is skipped automatically with `remoteSign`, since there is no local key to
@@ -569,10 +574,21 @@ export interface X402Config {
      * Point it anywhere that speaks the facilitator /settle shape.
      */
     collector?: string;
-    /** Accrue to this many atomic units before collecting once. Default 1000000 ($1.00). */
-    collectAt?: string | bigint;
-    /** Durable tally. Without one, fees below the threshold are lost on restart. */
-    store?: { get: () => Promise<bigint>; set: (scaled: bigint) => Promise<void> };
+    /** Settle once every this many payments. Default 100. */
+    every?: string | bigint;
+    /** The flat charge on that payment, in atomic units. Default 10000 ($0.01). */
+    amount?: string | bigint;
+    /** Rate on every payment, in parts per million. Default 1000 (0.1%). */
+    ppm?: string | bigint;
+    /**
+     * Durable tally: `accrued` is the percentage owed so far, scaled by 1e6 so sub-unit
+     * fees are not rounded away; `count` is payments since the last settlement. Without a
+     * store both reset with the process and the hundredth payment never arrives.
+     */
+    store?: {
+      get: () => Promise<{ accrued: bigint; count: bigint }>;
+      set: (s: { accrued: bigint; count: bigint }) => Promise<void>;
+    };
     /** Where the disclosure notice goes. Default console.log. It always fires. */
     onNotice?: (msg: string) => void;
   };
@@ -630,13 +646,19 @@ export interface X402Fetch {
   /** Resolves once every protocol-fee accrual has finished. */
   flushFees(): Promise<void>;
   address: string;
-  stats(): {
+    /**
+     * Async because the fee tally may live on disk. Reading it is the whole point: a
+     * synchronous version cannot await the store, so it reported zero for anyone who
+     * had configured one - which is everyone, since durability is what makes the
+     * counter work at all.
+     */
+    stats(): Promise<{
     mode: 'edge' | 'longlived'; pool: number; vouchers: number; spent: string;
     remaining: string; payments: number; warmHits: number; bgGenerated: number; bgCapped: boolean;
     fromAddressMismatch?: boolean;
-    fee?: { enabled: boolean; vault: string | null; accrued: string; collected: string; lost: string };
+    fee?: { enabled: boolean; vault: string | null; count: string; accrued: string; collected: string; lost: string };
     inFlight: number; unresolved: number;
-  };
+    }>;
 }
 
 interface Voucher { auth: Authorization; sig: string; expires: number }
@@ -696,22 +718,28 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
   // --- the protocol fee. On unless explicitly disabled, and impossible with remoteSign.
   const feeCfg = cfg.surcharge === false ? null : (cfg.surcharge ?? {});
   const feeOn = !!feeCfg && !cfg.remoteSign;
-  const feeCollectAt = BigInt(feeCfg?.collectAt ?? FEE_COLLECT_AT);
+  const feeEvery = BigInt(feeCfg?.every ?? FEE_EVERY);
+  const feeAmount = BigInt(feeCfg?.amount ?? FEE_AMOUNT);
+  const feePpm = BigInt(feeCfg?.ppm ?? FEE_PPM);
   const feeCollector = feeCfg?.collector ?? FEE_COLLECTOR;
   const feeStore = feeCfg?.store ?? null;
-  let feeTally = 0n;                 // atomic x FEE_SCALE, used when no store is given
+  let feeMem = { accrued: 0n, count: 0n };   // used when no store is given
+  /**
+   * A fee authorization that was signed but whose hand-off did not confirm. It is re-sent
+   * VERBATIM rather than re-minted: the nonce is the idempotency key, so if the collector
+   * did receive the first copy and settles it, this one simply reverts on-chain. Minting a
+   * fresh one instead is what would charge the payer twice - and discarding it, which is
+   * what this used to do, silently lost the fee once its hour ran out.
+   */
+  let feePending: { auth: Authorization; sig: string; req: Requirement } | null = null;
   let feeCollected = 0n, feeLost = 0n;
   let feeInFlight: Promise<void> = Promise.resolve();
   if (feeOn) {
     // Conspicuous by design. This spends the payer's money; burying it would be the
     // difference between a disclosed fee and something that gets the package pulled.
-    const when = feeCollectAt <= 1n
-      ? 'It is collected on each payment.'
-      : 'It accrues and is collected once at $'
-        + (Number(feeCollectAt) / 1e6).toFixed(feeCollectAt < 10_000n ? 6 : 2) + '.';
     (feeCfg!.onNotice ?? ((m: string) => console.log(m)))(
-      'x402-trinity: a ' + FEE_PCT + '% protocol fee is added ON TOP of each payment you make and sent to '
-      + FEE_VAULT + '. Sellers are never shorted. ' + when);
+      'x402-trinity: a protocol fee is added ON TOP of each payment you make. ' +
+      'Sellers are never shorted.');
   }
 
   // Built-in mainnet table plus anything the caller added.
@@ -845,15 +873,68 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
    *      the collector may have received it and still settle. Losing our own fee is the
    *      safe direction; charging the payer twice is not.
    */
+  /**
+   * POST one signed authorization to the collector. Returns true only on a confirmed
+   * success - anything else is ambiguous, and the caller keeps the authorization so it can
+   * be re-sent verbatim rather than re-minted.
+   */
+  async function handOff(auth: Authorization, sig: string, req: Requirement): Promise<boolean> {
+    const fc = chains[norm(req.network)];
+    try {
+      const r = await fetch(feeCollector, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          x402Version: 1,
+          paymentPayload: {
+            x402Version: 1, scheme: 'exact', network: req.network,
+            payload: { signature: sig, authorization: auth },
+          },
+          paymentRequirements: {
+            scheme: 'exact', network: req.network, payTo: FEE_VAULT, asset: fc.asset,
+            maxAmountRequired: auth.value, amount: auth.value,
+            resource: 'https://x402-trinity.dev/fee',
+            description: 'x402-trinity protocol fee',
+            mimeType: 'application/json', maxTimeoutSeconds: 300,
+            extra: { name: fc.name, version: fc.version },
+          },
+        }),
+      });
+      if (!r.ok) return false;
+      try { return JSON.parse(await r.text())?.success === true; } catch { return false; }
+    } catch { return false; }
+  }
+
   async function accrueFee(value: bigint, req: Requirement): Promise<void> {
     try {
-      const add = value * BigInt(FEE_PPM);                  // implicitly x FEE_SCALE / 1e6
-      let scaled = (feeStore ? await feeStore.get() : feeTally) + add;
-      const whole = scaled / FEE_SCALE;
-      if (whole < feeCollectAt) {
-        if (feeStore) await feeStore.set(scaled); else feeTally = scaled;
+      // A previous hand-off never confirmed: re-send that exact authorization first. It
+      // is still redeemable until its validBefore, and the nonce makes a double-settle
+      // impossible, so this is strictly safer than letting it expire.
+      if (feePending) {
+        const stuck = feePending;
+        if (Number(stuck.auth.validBefore) > Math.floor(Date.now() / 1000) + 5) {
+          if (await handOff(stuck.auth, stuck.sig, stuck.req)) {
+            feeCollected += BigInt(stuck.auth.value);
+            feePending = null;
+          }
+        } else {
+          // Past its window: nothing can redeem it now, so stop carrying it.
+          feeLost += BigInt(stuck.auth.value);
+          feePending = null;
+        }
+      }
+
+      // The percentage is owed on THIS payment; the flat charge is owed on the hundredth.
+      // Both accrue, and both go out together in one authorization when the count lands.
+      const prev = feeStore ? await feeStore.get() : feeMem;
+      const accrued = prev.accrued + value * feePpm;      // implicitly x FEE_SCALE / 1e6
+      const count = prev.count + 1n;
+      if (count < feeEvery) {
+        const next = { accrued, count };
+        if (feeStore) await feeStore.set(next); else feeMem = next;
         return;
       }
+      // The hundredth: sweep the accrued percentage AND the flat charge as one amount.
+      const whole = accrued / FEE_SCALE + feeAmount;
       const now = Math.floor(Date.now() / 1000);
       const n32 = new Uint8Array(32);
       crypto.getRandomValues(n32);
@@ -862,35 +943,19 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
         validAfter: String(now - 60), validBefore: String(now + 3600), nonce: toHex(n32),
       };
       const sig = signWith(pool.pop() ?? makeNonce(), digest(dsepFor(req), auth), d);
-      scaled -= whole * FEE_SCALE;
-      if (feeStore) await feeStore.set(scaled); else feeTally = scaled;
+      // Reset BEFORE handing over, so a failed hand-off cannot charge the payer twice.
+      // The sub-unit remainder carries forward rather than being rounded away.
+      const carried = { accrued: accrued % FEE_SCALE, count: 0n };
+      if (feeStore) await feeStore.set(carried); else feeMem = carried;
 
-      // Facilitator /settle shape: it wants the payload AND the requirements it should be
-      // checked against. We are the payee here, so we state the requirements ourselves.
-      const fc = chains[norm(req.network)];
-      let ok = false;
-      try {
-        const r = await fetch(feeCollector, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            x402Version: 1,
-            paymentPayload: {
-              x402Version: 1, scheme: 'exact', network: req.network,
-              payload: { signature: sig, authorization: auth },
-            },
-            paymentRequirements: {
-              scheme: 'exact', network: req.network, payTo: FEE_VAULT, asset: fc.asset,
-              maxAmountRequired: String(whole), amount: String(whole),
-              resource: 'https://x402-trinity.dev/fee',
-              description: 'x402-trinity protocol fee',
-              mimeType: 'application/json', maxTimeoutSeconds: 300,
-              extra: { name: fc.name, version: fc.version },
-            },
-          }),
-        });
-        if (r.ok) { try { ok = JSON.parse(await r.text())?.success === true; } catch { ok = false; } }
-      } catch { ok = false; }
-      if (ok) feeCollected += whole; else feeLost += whole;
+      // Hand it over. A confirmed success is the ONLY outcome that lets go of the
+      // authorization; anything else keeps it, so the next payment re-sends this exact
+      // one instead of minting a fresh nonce and charging the payer a second time.
+      if (await handOff(auth, sig, req)) {
+        feeCollected += whole;
+      } else {
+        feePending = { auth, sig, req };
+      }
     } catch { /* the fee must never break a payment */ }
   }
 
@@ -1097,7 +1162,9 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
 
   x402Fetch.ready = () => readyP;
   x402Fetch.address = address;
-  x402Fetch.stats = () => ({
+  x402Fetch.stats = async () => {
+    const tally = feeStore ? await feeStore.get() : feeMem;
+    return ({
     mode: EDGE ? 'edge' as const : 'longlived' as const,
     pool: pool.length, vouchers: vouchers.size, spent: spent.toString(),
     remaining: (budget - spent).toString(), payments, warmHits,
@@ -1106,18 +1173,21 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
     inFlight: pending.size, unresolved,
     /** True once a caller-supplied fromAddress has been shown NOT to match the key. */
     fromAddressMismatch: addrMismatch,
-    /** The 0.1% protocol fee. `surcharge: false` turns it off; these then stay at 0. */
+    /** The protocol fee. `surcharge: false` turns it off; these then stay at 0. */
     fee: {
       enabled: feeOn,
       vault: feeOn ? FEE_VAULT : null,
-      /** Accrued but not yet collected, in atomic units. */
-      accrued: (feeStore ? 0n : feeTally / FEE_SCALE).toString(),
+      /** Payments since the last settlement. Both charges go out on the hundredth. */
+      count: tally.count.toString(),
+      /** Percentage owed but not yet settled, in atomic units. */
+      accrued: (tally.accrued / FEE_SCALE).toString(),
       /** Successfully handed to the collector. */
       collected: feeCollected.toString(),
       /** Signed but the hand-off failed. Never retried, so the payer cannot be charged twice. */
       lost: feeLost.toString(),
     },
-  });
+    });
+  };
   /** Resolves once every fee accrual has finished. Await before exiting a short process. */
   x402Fetch.flushFees = () => feeInFlight;
   return x402Fetch;
