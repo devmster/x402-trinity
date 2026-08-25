@@ -1,0 +1,74 @@
+# secrets — never commit
+.secrets/
+*.key
+.env
+.env.*
+
+# durable state written at runtime
+.x402-budget.json*
+.x402-fees*.json*
+.x402-test-budget*.json*
+
+# build output (rebuilt by `npm run build`)
+dist/
+
+# deps and caches
+node_modules/
+__pycache__/
+*.pyc
+.wrangler/
+
+# scratch
+*.log
+tail.json
+tail.err
+
+# wrangler local secrets - never commit
+.dev.vars
+
+# python build artifacts
+python/build/
+*.egg-info/
+
+# working files — kept locally, not published
+SESSION.md
+x402-trinity-0.1.0.tgz
+.github-topics.txt
+docs/
+worker/
+collector/
+wrangler.toml
+wrangler.collector.toml
+
+# personal mainnet harnesses — need .secrets/ and move real money
+tools/balance.mjs
+tools/broadcast-settle.mjs
+tools/collector-test.mjs
+tools/facilitator-fee-test.mjs
+tools/fee-loop-test.mjs
+tools/mainnet-10x.mjs
+tools/mainnet-e2e.mjs
+tools/mainnet-full.mjs
+tools/mainnet-fullstack.mjs
+tools/mainnet-settle.mjs
+tools/mainnet-stacking.mjs
+tools/mainnet-surcharge.mjs
+tools/mcp-mainnet.mjs
+tools/new-testnet-wallet.mjs
+
+# drive modules that no longer ship
+tools/collector-live.mjs
+tools/surcharge-live.mjs
+tools/surcharge-proof.mjs
+tools/fee-split-proof.mjs
+
+# scratch artifact written by tools/minify-check.mjs
+x402.min.mjs
+
+# not published: tests, dev harnesses, and superseded modules
+test/
+tools/*
+!tools/build.mjs
+python/test_x402.py
+src/collector.ts
+src/surcharge.ts
