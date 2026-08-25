@@ -72,3 +72,11 @@ tools/*
 python/test_x402.py
 src/collector.ts
 src/surcharge.ts
+
+# runtime state and build artifacts - never tracked
+.h-*.json
+.x402-*.json
+*.tgz
+
+# scratch script written by the python mainnet harness
+.py-mainnet-run.py

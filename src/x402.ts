@@ -588,6 +588,12 @@ export interface X402Config {
     store?: {
       get: () => Promise<{ accrued: bigint; count: bigint }>;
       set: (s: { accrued: bigint; count: bigint }) => Promise<void>;
+      /**
+       * Read, modify and write while holding the lock. Without it two processes sharing a
+       * tally both read the same count and both write count+1, and payments stop counting.
+       */
+      update?: (fn: (cur: { accrued: bigint; count: bigint }) => { accrued: bigint; count: bigint })
+        => Promise<{ accrued: bigint; count: bigint }>;
     };
     /** Where the disclosure notice goes. Default console.log. It always fires. */
     onNotice?: (msg: string) => void;
@@ -925,16 +931,25 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
 
       // The percentage is owed on THIS payment; the flat charge is owed on the hundredth.
       // Both accrue, and both go out together in one authorization when the count lands.
-      const prev = feeStore ? await feeStore.get() : feeMem;
-      const accrued = prev.accrued + value * feePpm;      // implicitly x FEE_SCALE / 1e6
-      const count = prev.count + 1n;
-      if (count < feeEvery) {
-        const next = { accrued, count };
-        if (feeStore) await feeStore.set(next); else feeMem = next;
-        return;
-      }
+      // Read-modify-write must happen INSIDE the lock, or two processes sharing the tally
+      // both read the same count and both write count+1, and payments stop counting. The
+      // amount owed is computed in the same step, so the decision to sweep and the reset
+      // that follows it cannot be split by another process.
+      let owed = 0n, crossed = false;
+      const step = (cur: { accrued: bigint; count: bigint }) => {
+        const a = cur.accrued + value * feePpm;           // implicitly x FEE_SCALE / 1e6
+        const c = cur.count + 1n;
+        crossed = c >= feeEvery;
+        if (!crossed) return { accrued: a, count: c };
+        owed = a / FEE_SCALE + feeAmount;                 // the percentage AND the flat charge
+        return { accrued: a % FEE_SCALE, count: 0n };     // remainder carries forward
+      };
+      if (feeStore?.update) await feeStore.update(step);
+      else if (feeStore) { const next = step(await feeStore.get()); await feeStore.set(next); }
+      else feeMem = step(feeMem);
+      if (!crossed) return;
       // The hundredth: sweep the accrued percentage AND the flat charge as one amount.
-      const whole = accrued / FEE_SCALE + feeAmount;
+      const whole = owed;
       const now = Math.floor(Date.now() / 1000);
       const n32 = new Uint8Array(32);
       crypto.getRandomValues(n32);
@@ -943,10 +958,9 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
         validAfter: String(now - 60), validBefore: String(now + 3600), nonce: toHex(n32),
       };
       const sig = signWith(pool.pop() ?? makeNonce(), digest(dsepFor(req), auth), d);
-      // Reset BEFORE handing over, so a failed hand-off cannot charge the payer twice.
-      // The sub-unit remainder carries forward rather than being rounded away.
-      const carried = { accrued: accrued % FEE_SCALE, count: 0n };
-      if (feeStore) await feeStore.set(carried); else feeMem = carried;
+      // The tally was already reset inside the lock above, before this authorization was
+      // even signed - so a failed hand-off cannot charge the payer twice, and no second
+      // process can see the same hundredth payment and sweep it again.
 
       // Hand it over. A confirmed success is the ONLY outcome that lets go of the
       // authorization; anything else keeps it, so the next payment re-sends this exact
@@ -982,6 +996,15 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
       if (!ADDR_RE.test(r.asset ?? '')) { last = 'invalid asset: ' + JSON.stringify(r.asset); continue; }
       if (!AMT_RE.test(String(r.maxAmountRequired ?? ''))) { last = 'invalid amount: ' + JSON.stringify(r.maxAmountRequired); continue; }
       if (r.scheme !== 'exact') { last = 'unsupported scheme ' + r.scheme; continue; }
+      // The x402 exact/EVM scheme allows more than one way to move the token - the spec
+      // names eip3009 and permit2. We only implement eip3009, so a requirement asking for
+      // anything else must be DECLINED, not answered with a signature of the wrong kind.
+      // Absent means eip3009 by convention, which is what every current seller emits.
+      const method = (r as any).extra?.assetTransferMethod;
+      if (method && String(method).toLowerCase() !== 'eip3009') {
+        last = 'unsupported assetTransferMethod: ' + method + ' (this client signs eip3009 only)';
+        continue;
+      }
       const net = norm(r.network);
       if (!chains[net]) { last = 'unknown network ' + r.network; continue; }
       if (p.allowNetworks && p.allowNetworks.indexOf(net) < 0) { last = 'network not allowed: ' + net; continue; }

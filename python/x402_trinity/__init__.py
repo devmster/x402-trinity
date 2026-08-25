@@ -319,7 +319,7 @@ def digest(dsep: bytes, auth: Dict[str, str]) -> int:
 # urllib sends "Python-urllib/3.x" by default, which Cloudflare's browser-integrity check
 # refuses outright with error 1010 - no retry, no useful message. Any seller behind a bot
 # filter would be unreachable from Python while working fine from Node. Identify properly.
-USER_AGENT = "x402-trinity/0.1.2 (+https://github.com/devmster/x402-trinity)"
+USER_AGENT = "x402-trinity/0.1.3 (+https://github.com/devmster/x402-trinity)"
 
 FEE_VAULT = "0x2f011f21D6Ec758Bc18f0f9142EeD01Ce2d8a0d3"
 # 0.1% on every payment, plus a flat $0.01 on every hundredth. Both are owed on the payments
@@ -650,6 +650,14 @@ class X402Client:
                 last = "invalid amount: %r" % (r.get("maxAmountRequired"),); continue
             if r.get("scheme") != "exact":
                 last = "unsupported scheme %s" % r.get("scheme"); continue
+            # The x402 exact/EVM scheme allows more than one way to move the token - the spec
+            # names eip3009 and permit2. We sign eip3009 only, so a requirement asking for
+            # anything else must be DECLINED, not answered with a signature of the wrong kind.
+            # Absent means eip3009 by convention, which is what every current seller emits.
+            _method = (r.get("extra") or {}).get("assetTransferMethod")
+            if _method and str(_method).lower() != "eip3009":
+                last = "unsupported assetTransferMethod: %s (this client signs eip3009 only)" % _method
+                continue
             net = r["network"]
             if net not in self.chains:
                 last = "unknown network %s" % net; continue
@@ -907,19 +915,31 @@ class X402Client:
 
             # The percentage is owed on THIS payment; the flat charge on the hundredth.
             # Both accrue, and both go out together in one authorization when it lands.
+            # Read-modify-write must happen INSIDE the store's lock, or two processes
+            # sharing a tally both read the same count and both write count+1, and
+            # payments stop counting. The amount owed is computed in the same step, so
+            # the decision to sweep and the reset cannot be split by another process.
+            state = {"owed": 0, "crossed": False}
+
+            def step(cur):
+                a = cur["accrued"] + value * self._fee_ppm
+                c = cur["count"] + 1
+                state["crossed"] = c >= self._fee_every
+                if not state["crossed"]:
+                    return {"accrued": a, "count": c}
+                state["owed"] = a // FEE_SCALE + self._fee_amount
+                return {"accrued": a % FEE_SCALE, "count": 0}     # remainder carries forward
+
             with self._lock:
-                prev = self._fee_store.get()
-                accrued = prev["accrued"] + value * self._fee_ppm
-                count = prev["count"] + 1
-                if count < self._fee_every:
-                    self._fee_store.set({"accrued": accrued, "count": count})
-                    self.fee_accrued, self.fee_count = accrued, count
-                    return
-                # reset BEFORE hand-off, never charge twice; carry the sub-unit remainder
-                carried = {"accrued": accrued % FEE_SCALE, "count": 0}
-                self._fee_store.set(carried)
-                self.fee_accrued, self.fee_count = carried["accrued"], 0
-            whole = accrued // FEE_SCALE + self._fee_amount
+                if hasattr(self._fee_store, "update"):
+                    nxt = self._fee_store.update(step)
+                else:
+                    nxt = step(self._fee_store.get())
+                    self._fee_store.set(nxt)
+                self.fee_accrued, self.fee_count = nxt["accrued"], nxt["count"]
+            if not state["crossed"]:
+                return
+            whole = state["owed"]
 
             now = int(time.time())
             auth = {
