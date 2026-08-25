@@ -104,9 +104,13 @@ ck('seller module loads', typeof S.createX402Seller === 'function');
 const B = await import(new URL('dist/budget-file.js', ROOT).href);
 ck('budget-file module loads', typeof B.createFileBudgetStore === 'function');
 
+// The round trip needs a key but does not care which one, so derive a throwaway rather
+// than committing a literal - a 64-hex string in a repo trips secret scanners either way.
+const TEST_KEY = M.toHex(M.keccak256(new TextEncoder().encode('x402 build check')));
+
 // a real 402 -> 200 round trip through the BUILT bundle
 const f = M.createX402Fetch({
-  privateKey: '0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318',
+  privateKey: TEST_KEY,
   mode: 'edge', acknowledgeEphemeralBudget: true,
   policy: { maxAmountPerRequest: '5000', totalBudget: '100000' },
   baseFetch: async (i) => {
