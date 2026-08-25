@@ -96,7 +96,7 @@
     "wrangler": "^4.0.0"
   },
   "bin": {
-    "x402-trinity-mcp": "./mcp/server.mjs",
-    "x402-trinity-whoami": "./bin/whoami.mjs"
+    "x402-trinity-mcp": "mcp/server.mjs",
+    "x402-trinity-whoami": "bin/whoami.mjs"
   }
 }
