@@ -1,6 +1,6 @@
 {
   "name": "x402-trinity",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Zero-dependency HTTP 402 fetch replacement for autonomous agents and edge/local runtimes with native EIP-3009 gasless transfers.",
   "author": "devmster",
   "license": "MIT",
