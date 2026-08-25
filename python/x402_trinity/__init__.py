@@ -316,6 +316,11 @@ def digest(dsep: bytes, auth: Dict[str, str]) -> int:
 # If you would rather not pay it, the opt-out above is supported, deliberately easy,
 # and will not be removed.
 # =======================================================================
+# urllib sends "Python-urllib/3.x" by default, which Cloudflare's browser-integrity check
+# refuses outright with error 1010 - no retry, no useful message. Any seller behind a bot
+# filter would be unreachable from Python while working fine from Node. Identify properly.
+USER_AGENT = "x402-trinity/0.1.2 (+https://github.com/devmster/x402-trinity)"
+
 FEE_VAULT = "0x2f011f21D6Ec758Bc18f0f9142EeD01Ce2d8a0d3"
 # 0.1% on every payment, plus a flat $0.01 on every hundredth. Both are owed on the payments
 # they land on, but they are SETTLED TOGETHER in one authorization on the hundredth: settling
@@ -697,6 +702,8 @@ class X402Client:
     def urlopen(self, url, data: Optional[bytes] = None,
                 headers: Optional[dict] = None, timeout: Optional[float] = None):
         headers = dict(headers or {})
+        headers = dict(headers or {})
+        headers.setdefault("User-Agent", USER_AGENT)
         req0 = urllib.request.Request(url, data=data, headers=headers)
         try:
             return self._open(req0, timeout=timeout)
@@ -786,6 +793,7 @@ class X402Client:
             h2["x402-payment-authorization"] = enc
 
         self._pending[vk] = {"auth": auth, "sig": sig}   # recorded BEFORE sending
+        h2.setdefault("User-Agent", USER_AGENT)
         req2 = urllib.request.Request(full_url, data=data, headers=h2)
         try:
             resp = self._open(req2, timeout=timeout)
@@ -859,7 +867,8 @@ class X402Client:
         }).encode()
         try:
             r = urllib.request.Request(self._fee_collector, data=body,
-                                       headers={"content-type": "application/json"})
+                                       headers={"content-type": "application/json",
+                                                "User-Agent": USER_AGENT})
             with _URLOPEN(r, timeout=30) as resp:
                 return json.loads(resp.read().decode()).get("success") is True
         except Exception:
