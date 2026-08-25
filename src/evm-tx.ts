@@ -186,8 +186,19 @@ export async function sendTransaction(
     throw new Error('evm-tx: signed transaction does not recover to the sender; refusing to broadcast');
   }
 
+  // r and s are fixed 32-byte values, but RLP integers must be MINIMAL: a leading zero
+  // byte makes them non-canonical and go-ethereum rejects the whole transaction with
+  // "rlp: non-canonical integer (leading zero bytes) for *big.Int". Either value starts
+  // with a zero byte roughly one time in 256, so this is invisible until it is not - it
+  // took seventy-one consecutive broadcasts to surface.
+  const trimZeros = (b: Uint8Array): Uint8Array => {
+    let i = 0;
+    while (i < b.length && b[i] === 0) i++;
+    return b.subarray(i);
+  };
   const raw = toHex(cat(new Uint8Array([0x02]),
-    rlp([...fields, minimal(BigInt(sig[64] - 27)), sig.slice(0, 32), sig.slice(32, 64)])));
+    rlp([...fields, minimal(BigInt(sig[64] - 27)),
+         trimZeros(sig.slice(0, 32)), trimZeros(sig.slice(32, 64))])));
   const hash = await rpc('eth_sendRawTransaction', [raw]);
   return { hash, from };
 }
