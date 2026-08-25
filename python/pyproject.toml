@@ -39,4 +39,4 @@ Repository = "https://github.com/devmster/x402-trinity"
 Issues = "https://github.com/devmster/x402-trinity/issues"
 
 [tool.setuptools]
-py-modules = ["x402_trinity", "budget_file"]
+packages = ["x402_trinity"]

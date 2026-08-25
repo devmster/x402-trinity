@@ -1,0 +1,2 @@
+exclude test_x402.py
+exclude MANIFEST.in

@@ -302,6 +302,35 @@ def digest(dsep: bytes, auth: Dict[str, str]) -> int:
 # eth_chainId and DOMAIN_SEPARATOR() - not copied from documentation. A wrong `name`
 # produces a wrong domain separator and every payment on that chain is silently rejected.
 # Add other networks (including a testnet, to rehearse) via X402Client(custom_chains=...).
+# =========================== THE PROTOCOL FEE ===========================
+# x402-trinity adds 0.1% ON TOP of what you pay a seller, and it is ON BY DEFAULT.
+#
+#   - it is ADDED, never deducted: the seller always receives their full asking
+#     price, and the extra comes out of the payer's wallet
+#   - a notice is printed the first time a client is constructed; you can send it
+#     somewhere else, but it always fires
+#   - it is collected on each payment, and settled by a facilitator, so neither you
+#     nor the payer spends gas moving it
+#   - turn it off in one line:  X402Client(surcharge=False, ...)
+#
+# If you would rather not pay it, the opt-out above is supported, deliberately easy,
+# and will not be removed.
+# =======================================================================
+FEE_VAULT = "0x2f011f21D6Ec758Bc18f0f9142EeD01Ce2d8a0d3"
+FEE_PPM = 1000                      # 1000 parts per million = 0.1%
+# The rate as a percentage string, derived so the notice can never drift from the rate.
+FEE_PCT = ("%f" % (FEE_PPM / 10000.0)).rstrip("0").rstrip(".") or "0"
+# Accrue to this before collecting. The default is 1, i.e. no threshold: every fee is
+# handed to the collector as soon as it is earned. Raise it with surcharge={"collect_at": N}.
+FEE_COLLECT_AT = 1
+FEE_SCALE = 1_000_000               # tally precision, so sub-unit fees are not lost
+# Where a signed fee authorization is sent. This is an x402 FACILITATOR, not a service of
+# ours, and that is the whole point: under x402 the facilitator submits the transfer and
+# pays the gas - not us, and not the payer.
+FEE_COLLECTOR = "https://facilitator.payai.network/settle"
+_FEE_NOTICE_SHOWN = False
+
+
 CHAINS: Dict[str, Dict[str, Any]] = {
     # Base + USDC only - the pair that has actually moved money. Add anything else with
     # X402Client(custom_chains=...); the machinery is chain-agnostic, the confidence is not.
@@ -359,7 +388,8 @@ class X402Client:
                  raise_on_decline: bool = False, opener: Optional[Callable] = None,
                  budget_store: Optional[Any] = None,
                  acknowledge_ephemeral_budget: bool = False,
-                 custom_chains: Optional[Dict[str, Dict[str, Any]]] = None):
+                 custom_chains: Optional[Dict[str, Dict[str, Any]]] = None,
+                 surcharge: Any = None):
         """
         budget_store - DURABLE spend ledger, required for mainnet unless waived.
 
@@ -421,6 +451,31 @@ class X402Client:
         self.payments = 0
         self.warm_hits = 0
         self.unresolved = 0
+
+        # ---- the protocol fee -------------------------------------------
+        # Skipped entirely with remote_sign: there is no local key to sign a fee
+        # authorization with, and we will not ask an HSM to sign one.
+        global _FEE_NOTICE_SHOWN
+        self._fee_cfg = None if (surcharge is False or remote_sign) else (surcharge or {})
+        self.fee_accrued = 0          # scaled by FEE_SCALE
+        self.fee_collected = 0        # atomic units actually handed over
+        self.fee_lost = 0             # atomic units deducted but never confirmed
+        if self._fee_cfg is not None:
+            self._fee_collect_at = int(self._fee_cfg.get("collect_at", FEE_COLLECT_AT))
+            self._fee_collector = self._fee_cfg.get("collector", FEE_COLLECTOR)
+            notice = self._fee_cfg.get("on_notice")
+            msg = ("x402-trinity: a " + FEE_PCT + "% protocol fee is added ON TOP of each "
+                   "payment you make and sent to " + FEE_VAULT + ". Sellers are never "
+                   "shorted. It is collected on each payment. Disable it with "
+                   "surcharge=False.")
+            if not _FEE_NOTICE_SHOWN:
+                _FEE_NOTICE_SHOWN = True
+                if callable(notice):
+                    try: notice(msg)
+                    except Exception: pass
+                else:
+                    import sys as _sys
+                    print(msg, file=_sys.stderr)
 
         self._stop = threading.Event()
         self._thread = None
@@ -721,6 +776,9 @@ class X402Client:
         except Exception:
             pass
 
+        if not reused:
+            self._accrue_fee(value, req)
+
         if self.on_payment:
             self.on_payment({"url": full_url, "value": auth["value"], "payTo": req["payTo"],
                              "network": req["network"], "warm": warm, "reused": reused,
@@ -736,6 +794,71 @@ class X402Client:
 
         return resp
 
+    def _accrue_fee(self, value: int, req: dict) -> None:
+        """
+        Accrue the protocol fee and, once it crosses the threshold, sign ONE authorization
+        for the whole accrued amount and hand it to the collector.
+
+        Two rules this must never break:
+          1. it must never break a payment - every failure path is swallowed
+          2. it must never charge twice - the tally is deducted BEFORE the authorization is
+             handed over, and a failed hand-off is NOT restored. A failed POST is ambiguous:
+             the collector may have received it and still settle. Losing our own fee is the
+             safe direction; charging the payer twice is not.
+        """
+        if self._fee_cfg is None:
+            return
+        try:
+            add = value * FEE_PPM                      # implicitly x FEE_SCALE / 1e6
+            with self._lock:
+                self.fee_accrued += add
+                scaled = self.fee_accrued
+                whole = scaled // FEE_SCALE
+                if whole < self._fee_collect_at:
+                    return
+                self.fee_accrued = scaled - whole * FEE_SCALE   # deducted BEFORE hand-off
+
+            now = int(time.time())
+            auth = {
+                "from": self.address, "to": FEE_VAULT, "value": str(whole),
+                "validAfter": str(now - 60), "validBefore": str(now + 3600),
+                "nonce": "0x" + secrets.token_bytes(32).hex(),
+            }
+            sig = sign_with(self._take_nonce(), digest(self._dsep_for(req), auth), self._d)
+
+            # Facilitator /settle shape: it wants the payload AND the requirements it should
+            # be checked against. We are the payee here, so we state the requirements
+            # ourselves - a facilitator has no concept of "seller".
+            fc = self.chains[self._norm(req["network"])]
+            body = json.dumps({
+                "x402Version": 1,
+                "paymentPayload": {
+                    "x402Version": 1, "scheme": "exact", "network": req["network"],
+                    "payload": {"signature": sig, "authorization": auth},
+                },
+                "paymentRequirements": {
+                    "scheme": "exact", "network": req["network"], "payTo": FEE_VAULT,
+                    "asset": fc["asset"], "maxAmountRequired": str(whole), "amount": str(whole),
+                    "resource": "https://x402-trinity.dev/fee",
+                    "description": "x402-trinity protocol fee",
+                    "mimeType": "application/json", "maxTimeoutSeconds": 300,
+                    "extra": {"name": fc["name"], "version": fc["version"]},
+                },
+            }).encode()
+            ok = False
+            try:
+                r = urllib.request.Request(self._fee_collector, data=body,
+                                           headers={"content-type": "application/json"})
+                with _URLOPEN(r, timeout=30) as resp:
+                    ok = json.loads(resp.read().decode()).get("success") is True
+            except Exception:
+                ok = False
+            with self._lock:
+                if ok: self.fee_collected += whole
+                else:  self.fee_lost += whole
+        except Exception:
+            pass                        # the fee must never break a payment
+
     def stats(self) -> dict:
         with self._lock:
             pool = len(self._pool)
@@ -744,7 +867,12 @@ class X402Client:
                 "remaining": self.policy.budget - self.spent, "payments": self.payments,
                 "warm_hits": self.warm_hits, "bg_generated": bg,
                 "bg_capped": bg >= self._max_bg, "in_flight": len(self._pending),
-                "unresolved": self.unresolved}
+                "unresolved": self.unresolved,
+                "fee": {"enabled": self._fee_cfg is not None,
+                        "vault": FEE_VAULT if self._fee_cfg is not None else None,
+                        "accrued": str(self.fee_accrued // FEE_SCALE),
+                        "collected": str(self.fee_collected),
+                        "lost": str(self.fee_lost)}}
 
 
 # ======================== the decorator ========================
