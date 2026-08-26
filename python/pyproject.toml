@@ -11,7 +11,7 @@ requires-python = ">=3.8"
 license = { text = "BUSL-1.1" }
 authors = [{ name = "devmster" }]
 maintainers = [{ name = "devmster" }]
-keywords = ["x402", "http-402", "http-402-protocol-handler", "stablecoin", "base-network", "usdc", "agentic-finance", "robotics-commerce", "embedded-crypto", "stdlib-only", "zero-dependency-edge-asset", "programmatic-micro-settlements"]
+keywords = ["x402", "http-402", "eip-3009", "constant-time-signing", "stablecoin", "base-network", "usdc", "agentic-finance", "robotics-commerce", "embedded-crypto", "stdlib-only", "http-402-protocol-handler", "zero-dependency-edge-asset", "programmatic-micro-settlements"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
