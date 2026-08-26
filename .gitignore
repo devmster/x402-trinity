@@ -80,3 +80,6 @@ src/surcharge.ts
 
 # scratch script written by the python mainnet harness
 .py-mainnet-run.py
+
+# the MCP registry publisher CLI, downloaded on demand
+.mcp-publisher/

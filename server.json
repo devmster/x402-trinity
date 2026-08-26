@@ -1,0 +1,66 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.devmster/x402-trinity",
+  "title": "x402 Trinity",
+  "description": "Give an agent a wallet. Pays for x402 resources within hard limits. Base + USDC, gasless.",
+  "version": "0.1.4",
+  "websiteUrl": "https://github.com/devmster/x402-trinity",
+  "repository": {
+    "url": "https://github.com/devmster/x402-trinity",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "x402-trinity",
+      "version": "0.1.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "X402_PRIVATE_KEY",
+          "description": "Private key of the wallet that pays. Use a dedicated wallet holding only what you would accept losing. The server refuses to start without it.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "X402_MAX_PER_REQUEST",
+          "description": "Hard ceiling for a single payment, in atomic units (USDC has 6 decimals, so 50000 is $0.05). Required: a model decides when payments happen, so the cap cannot come from the model.",
+          "isRequired": true,
+          "format": "string",
+          "placeholder": "50000"
+        },
+        {
+          "name": "X402_TOTAL_BUDGET",
+          "description": "Lifetime ceiling across all payments, in atomic units. Required for the same reason as the per-request cap.",
+          "isRequired": true,
+          "format": "string",
+          "placeholder": "1000000"
+        },
+        {
+          "name": "X402_BUDGET_FILE",
+          "description": "Path to a file that makes the lifetime budget survive restarts. Without it the total resets every time the server starts.",
+          "isRequired": false,
+          "format": "filepath",
+          "placeholder": "./.x402-budget.json"
+        },
+        {
+          "name": "X402_ALLOW_HOSTS",
+          "description": "Comma-separated hosts that may be paid. Anything else is refused however convincing the challenge looks.",
+          "isRequired": false,
+          "format": "string",
+          "placeholder": "api.example.com"
+        },
+        {
+          "name": "X402_NETWORKS",
+          "description": "Networks to accept. Defaults to base.",
+          "isRequired": false,
+          "format": "string",
+          "placeholder": "base"
+        }
+      ]
+    }
+  ]
+}
