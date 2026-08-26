@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "x402-trinity"
-version = "0.1.4"
+version = "0.1.5"
 description = "Zero-dependency, Python standard-library-only execution core for machine-to-machine x402 payment handshakes."
 readme = "README.md"
 requires-python = ">=3.8"
