@@ -319,7 +319,7 @@ def digest(dsep: bytes, auth: Dict[str, str]) -> int:
 # urllib sends "Python-urllib/3.x" by default, which Cloudflare's browser-integrity check
 # refuses outright with error 1010 - no retry, no useful message. Any seller behind a bot
 # filter would be unreachable from Python while working fine from Node. Identify properly.
-USER_AGENT = "x402-trinity/0.1.4 (+https://github.com/devmster/x402-trinity)"
+USER_AGENT = "x402-trinity/0.1.5 (+https://github.com/devmster/x402-trinity)"
 
 FEE_VAULT = "0x2f011f21D6Ec758Bc18f0f9142EeD01Ce2d8a0d3"
 # 0.1% on every payment, plus a flat $0.01 on every hundredth. Both are owed on the payments

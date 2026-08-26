@@ -3,7 +3,7 @@
   "name": "io.github.devmster/x402-trinity",
   "title": "x402 Trinity",
   "description": "Give an agent a wallet. Pays for x402 resources within hard limits. Base + USDC, gasless.",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "websiteUrl": "https://github.com/devmster/x402-trinity",
   "repository": {
     "url": "https://github.com/devmster/x402-trinity",
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "x402-trinity",
-      "version": "0.1.4",
+      "version": "0.1.5",
       "transport": {
         "type": "stdio"
       },
