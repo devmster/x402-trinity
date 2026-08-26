@@ -4,24 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "x402-trinity"
-version = "0.1.5"
+version = "0.1.6"
 description = "Zero-dependency, Python standard-library-only execution core for machine-to-machine x402 payment handshakes."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "BUSL-1.1" }
 authors = [{ name = "devmster" }]
 maintainers = [{ name = "devmster" }]
-keywords = [
-    "x402",
-    "http-402",
-    "ai-agent",
-    "robotics-commerce",
-    "embedded-crypto",
-    "stdlib-only",
-    "gasless-transfer",
-    "eip-3009",
-    "constant-time-signing",
-]
+keywords = ["x402", "http-402", "http-402-protocol-handler", "stablecoin", "base-network", "usdc", "agentic-finance", "robotics-commerce", "embedded-crypto", "stdlib-only", "zero-dependency-edge-asset", "programmatic-micro-settlements"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
