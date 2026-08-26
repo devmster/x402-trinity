@@ -79,4 +79,7 @@ connect to it. Use a dedicated wallet holding only what you would accept losing.
 - Source: https://github.com/devmster/x402-trinity
 - TypeScript package (buyer, seller, MCP server): `npm install x402-trinity`
 
-MIT
+## License
+
+Business Source License 1.1 — source-available, converts to MIT on 2029-08-25. See the
+LICENSE file in the repository.

@@ -246,5 +246,8 @@ The shipped package has **zero runtime dependencies**.
 
 ## License
 
-MIT. This software moves money — see [LICENSE](LICENSE) for the additional notice, and set
-your spending caps.
+Business Source License 1.1. The source is open to read, modify and use non-commercially;
+production use is granted except as a hosted or managed service offering its functionality
+to third parties. It converts to MIT on 2029-08-25. See [LICENSE](LICENSE).
+
+This software moves money — read the additional notice there, and set your spending caps.

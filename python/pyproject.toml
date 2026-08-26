@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "x402-trinity"
-version = "0.1.3"
+version = "0.1.4"
 description = "Zero-dependency, Python standard-library-only execution core for machine-to-machine x402 payment handshakes."
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+license = { text = "BUSL-1.1" }
 authors = [{ name = "devmster" }]
 maintainers = [{ name = "devmster" }]
 keywords = [
@@ -25,7 +25,6 @@ keywords = [
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Operating System :: OS Independent",
   "Topic :: Software Development :: Libraries :: Python Modules",
