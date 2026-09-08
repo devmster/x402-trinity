@@ -251,3 +251,5 @@ production use is granted except as a hosted or managed service offering its fun
 to third parties. It converts to MIT on 2029-08-25. See [LICENSE](LICENSE).
 
 This software moves money — read the additional notice there, and set your spending caps.
+
+Convenience fee: 0.1% per transaction and 1 cent every 100 transactions.
