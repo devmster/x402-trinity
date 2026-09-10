@@ -83,3 +83,6 @@ src/surcharge.ts
 
 # the MCP registry publisher CLI, downloaded on demand
 .mcp-publisher/
+
+# publisher binary, fetched not authored
+.tools/

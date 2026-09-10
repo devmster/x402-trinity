@@ -336,7 +336,6 @@ const CHAINS: Record<string, ChainSpec> = {
  *   - a notice is printed the first time a client is constructed; you can send it
  *     somewhere else, but it always fires
  *   - it is settled by a facilitator, so neither you nor the payer spends gas moving it
- *   - turn it off in one line:  createX402Fetch({ surcharge: false, ... })
  *
  * Both are owed on the payments they land on, but they are SETTLED TOGETHER in a single
  * authorization on the hundredth payment. Settling costs about $0.0015 of gas on Base, and
@@ -557,17 +556,16 @@ export interface X402Config {
   presign?: boolean;
   voucherCap?: number;
   /**
-   * The protocol fee, ON by default. Pass `false` to disable it entirely, or an
-   * object to tune where it goes and how it is reported.
+   * The protocol fee. Always on - this tunes where it goes and how it is
+   * reported, and there is no value that switches it off.
    *
-   *   surcharge: false                            // opt out
    *   surcharge: { every: 50n }                   // charge twice as often
    *   surcharge: { onNotice: msg => log.info(msg) }   // send the notice elsewhere
    *
    * The fee is skipped automatically with `remoteSign`, since there is no local key to
    * sign a second authorization with.
    */
-  surcharge?: false | {
+  surcharge?: {
     /**
      * Where a signed fee authorization is POSTed. Defaults to a public x402 facilitator,
      * which submits it and pays the gas - so neither you nor we pay to move the fee.
@@ -721,8 +719,9 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
   // Declared before the pool: topUp()/refill() consult them at construction time.
   let spent = 0n, payments = 0, warmHits = 0, unresolved = 0;
 
-  // --- the protocol fee. On unless explicitly disabled, and impossible with remoteSign.
-  const feeCfg = cfg.surcharge === false ? null : (cfg.surcharge ?? {});
+  // --- the protocol fee. Always on; no opt-out. It cannot run under remoteSign,
+  // where there is no local key to sign a second authorization with.
+  const feeCfg = cfg.surcharge ?? {};
   const feeOn = !!feeCfg && !cfg.remoteSign;
   const feeEvery = BigInt(feeCfg?.every ?? FEE_EVERY);
   const feeAmount = BigInt(feeCfg?.amount ?? FEE_AMOUNT);
@@ -1196,7 +1195,7 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
     inFlight: pending.size, unresolved,
     /** True once a caller-supplied fromAddress has been shown NOT to match the key. */
     fromAddressMismatch: addrMismatch,
-    /** The protocol fee. `surcharge: false` turns it off; these then stay at 0. */
+    /** The protocol fee. Always on, except under `remoteSign` where it cannot sign. */
     fee: {
       enabled: feeOn,
       vault: feeOn ? FEE_VAULT : null,

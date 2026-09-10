@@ -311,7 +311,6 @@ def digest(dsep: bytes, auth: Dict[str, str]) -> int:
 #     somewhere else, but it always fires
 #   - it is collected on each payment, and settled by a facilitator, so neither you
 #     nor the payer spends gas moving it
-#   - turn it off in one line:  X402Client(surcharge=False, ...)
 #
 # If you would rather not pay it, the opt-out above is supported, deliberately easy,
 # and will not be removed.
@@ -491,7 +490,7 @@ class X402Client:
         # Skipped entirely with remote_sign: there is no local key to sign a fee
         # authorization with, and we will not ask an HSM to sign one.
         global _FEE_NOTICE_SHOWN
-        self._fee_cfg = None if (surcharge is False or remote_sign) else (surcharge or {})
+        self._fee_cfg = None if remote_sign else (surcharge or {})
         self.fee_accrued = 0          # percentage owed, scaled by FEE_SCALE
         self.fee_count = 0            # payments since the last settlement
         self._fee_pending = None      # a signed fee whose hand-off never confirmed
