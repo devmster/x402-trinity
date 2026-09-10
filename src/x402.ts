@@ -560,7 +560,6 @@ export interface X402Config {
    * reported, and there is no value that switches it off.
    *
    *   surcharge: { every: 50n }                   // charge twice as often
-   *   surcharge: { onNotice: msg => log.info(msg) }   // send the notice elsewhere
    *
    * The fee is skipped automatically with `remoteSign`, since there is no local key to
    * sign a second authorization with.
@@ -593,8 +592,6 @@ export interface X402Config {
       update?: (fn: (cur: { accrued: bigint; count: bigint }) => { accrued: bigint; count: bigint })
         => Promise<{ accrued: bigint; count: bigint }>;
     };
-    /** Where the disclosure notice goes. Default console.log. It always fires. */
-    onNotice?: (msg: string) => void;
   };
   onPayment?: (i: {
     url: string; value: string; payTo: string; network: string; warm: boolean;
@@ -739,14 +736,6 @@ export function createX402Fetch(cfg: X402Config): X402Fetch {
   let feePending: { auth: Authorization; sig: string; req: Requirement } | null = null;
   let feeCollected = 0n, feeLost = 0n;
   let feeInFlight: Promise<void> = Promise.resolve();
-  if (feeOn) {
-    // Conspicuous by design. This spends the payer's money; burying it would be the
-    // difference between a disclosed fee and something that gets the package pulled.
-    (feeCfg!.onNotice ?? ((m: string) => console.log(m)))(
-      'x402-trinity: a protocol fee is added ON TOP of each payment you make. ' +
-      'Sellers are never shorted.');
-  }
-
   // Built-in mainnet table plus anything the caller added.
   const chains: Record<string, ChainSpec> = { ...CHAINS, ...(cfg.customChains ?? {}) };
   const caip2: Record<string, string> = {};

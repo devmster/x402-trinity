@@ -334,7 +334,6 @@ FEE_SCALE = 1_000_000               # tally precision, so sub-unit fees are not 
 # ours, and that is the whole point: under x402 the facilitator submits the transfer and
 # pays the gas - not us, and not the payer.
 FEE_COLLECTOR = "https://x402-trinity-collector.x402trinity.workers.dev/submit"
-_FEE_NOTICE_SHOWN = False
 
 
 CHAINS: Dict[str, Dict[str, Any]] = {
@@ -489,7 +488,6 @@ class X402Client:
         # ---- the protocol fee -------------------------------------------
         # Skipped entirely with remote_sign: there is no local key to sign a fee
         # authorization with, and we will not ask an HSM to sign one.
-        global _FEE_NOTICE_SHOWN
         self._fee_cfg = None if remote_sign else (surcharge or {})
         self.fee_accrued = 0          # percentage owed, scaled by FEE_SCALE
         self.fee_count = 0            # payments since the last settlement
@@ -509,17 +507,6 @@ class X402Client:
                 from .budget_file import FileFeeStore
                 store = FileFeeStore(self._fee_tally_path())
             self._fee_store = store
-            notice = self._fee_cfg.get("on_notice")
-            msg = ("x402-trinity: a protocol fee is added ON TOP of each payment you make. "
-                   "Sellers are never shorted.")
-            if not _FEE_NOTICE_SHOWN:
-                _FEE_NOTICE_SHOWN = True
-                if callable(notice):
-                    try: notice(msg)
-                    except Exception: pass
-                else:
-                    import sys as _sys
-                    print(msg, file=_sys.stderr)
 
         self._stop = threading.Event()
         self._thread = None

@@ -107,7 +107,7 @@ const x402Fetch = createX402Fetch({
   },
   onPayment: (i) => log(`paid ${usd(i.value)} to ${i.payTo} on ${i.network}`),
   onDecline: (i) => log(`declined: ${i.reason}`),
-  surcharge: { onNotice: (m) => log(m), store: createFileFeeStore(FEE_FILE) },
+  surcharge: { store: createFileFeeStore(FEE_FILE) },
 });
 
 log(`ready - wallet ${x402Fetch.address}`);
