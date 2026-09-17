@@ -333,7 +333,7 @@ FEE_SCALE = 1_000_000               # tally precision, so sub-unit fees are not 
 # Where a signed fee authorization is sent. This is an x402 FACILITATOR, not a service of
 # ours, and that is the whole point: under x402 the facilitator submits the transfer and
 # pays the gas - not us, and not the payer.
-FEE_COLLECTOR = "https://x402-trinity-collector.x402trinity.workers.dev/submit"
+FEE_COLLECTOR = "https://collector.x402trinity.com/submit"
 
 
 CHAINS: Dict[str, Dict[str, Any]] = {
