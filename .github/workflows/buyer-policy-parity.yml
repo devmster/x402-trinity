@@ -1,0 +1,78 @@
+# THE EXACTNESS GATE.
+#
+# The buyer's spend policy is implemented twice - once in TypeScript, once in Python. Nothing
+# forced those two copies to agree. A divergence would not throw; it would quietly let one
+# client spend where the other refused, and the first anyone would hear of it is a budget that
+# did not hold.
+#
+# So both clients run the same fixture and print the same lines, and this job compares the two
+# outputs byte for byte. One byte apart is a failure. There is no tolerance to tune.
+#
+# The seats talk to a stub, never the network. No RPC, no facilitator, no money, no secrets -
+# this job needs nothing configured to run, on a fork or anywhere else.
+
+name: buyer policy parity
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: TypeScript vs Python (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both ends of the supported range. If the two languages agree on one Python and not
+        # the other, that is worth finding here rather than in a user's runtime.
+        python: ['3.9', '3.13']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        # dist/ is not tracked; the TypeScript seat imports the built client on purpose, so
+        # that what is compared is what ships.
+        run: npm run build
+
+      - name: TypeScript seat
+        # Each seat also checks itself against the gold answers in the fixture, so a shared
+        # misreading cannot pass quietly by being wrong in the same way twice.
+        run: node tests/parity/ts_seat.mjs | tee ts.out
+
+      - name: Python seat
+        run: python tests/parity/py_seat.py | tee py.out
+
+      - name: Exactness gate
+        run: |
+          if cmp -s ts.out py.out; then
+            echo "The two clients agree, byte for byte, on all $(wc -l < ts.out) steps."
+            exit 0
+          fi
+          echo "::error title=Buyer policy parity broken::TypeScript and Python disagree on the buyer spend policy."
+          echo
+          echo "--- typescript          +++ python"
+          diff -u ts.out py.out || true
+          echo
+          echo "One byte is enough to fail this. Fix the divergence or, if the change is"
+          echo "intended, update tests/fixtures/buyer_policy_vectors.json in the same commit."
+          exit 1

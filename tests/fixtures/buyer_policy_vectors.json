@@ -1,0 +1,88 @@
+{
+  "_": [
+    "GOLD FIXTURE - the buyer spend policy, shared by the TypeScript and Python clients.",
+    "",
+    "maxAmountPerRequest and totalBudget are implemented twice, once per language. Nothing",
+    "forced those two copies to agree until this file existed. Both seats read these vectors,",
+    "run them through their own shipped client, and print one line per step. CI compares the",
+    "two outputs byte for byte.",
+    "",
+    "SCOPE IS THE CAP CHECK. The per-request cap, the lifetime budget, and the allow-lists",
+    "that gate them. Deliberately excluded: the durable-store refusal, whose message names",
+    "language-specific identifiers (budgetStore / acknowledgeEphemeralBudget vs budget_store /",
+    "acknowledge_ephemeral_budget) and so cannot be byte-identical by design.",
+    "",
+    "Amounts are atomic units as strings - never numbers. A JSON number would lose precision",
+    "above 2^53 and the two languages would disagree for reasons that have nothing to do with",
+    "policy.",
+    "",
+    "`expect` is the gold answer. A seat that disagrees with it fails on its own, before the",
+    "two seats are ever compared - so a shared misreading of the fixture cannot pass quietly."
+  ],
+
+  "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+  "network": "base",
+  "payTo": "0xAbCdEf0000000000000000000000000000000042",
+  "host": "telemetry.local",
+
+  "vectors": [
+    {
+      "id": "budget-runs-out",
+      "why": "Two payments fit, the third does not. The refusal must name what is left.",
+      "policy": { "maxAmountPerRequest": "5000", "totalBudget": "12000" },
+      "steps": [
+        { "amount": "5000", "expect": { "decision": "allow", "remaining": "7000", "reason": "" } },
+        { "amount": "5000", "expect": { "decision": "allow", "remaining": "2000", "reason": "" } },
+        { "amount": "5000", "expect": { "decision": "deny", "remaining": "2000", "reason": "amount 5000 exceeds remaining budget 2000" } }
+      ]
+    },
+    {
+      "id": "per-request-cap",
+      "why": "One unit over the cap is refused even with the whole budget untouched.",
+      "policy": { "maxAmountPerRequest": "5000", "totalBudget": "100000" },
+      "steps": [
+        { "amount": "5001", "expect": { "decision": "deny", "remaining": "100000", "reason": "amount 5001 exceeds per-request cap 5000" } },
+        { "amount": "5000", "expect": { "decision": "allow", "remaining": "95000", "reason": "" } }
+      ]
+    },
+    {
+      "id": "exact-boundaries-are-allowed",
+      "why": "amount == cap and spent + amount == budget are both inside the limit, not outside it.",
+      "policy": { "maxAmountPerRequest": "5000", "totalBudget": "5000" },
+      "steps": [
+        { "amount": "5000", "expect": { "decision": "allow", "remaining": "0", "reason": "" } },
+        { "amount": "1", "expect": { "decision": "deny", "remaining": "0", "reason": "amount 1 exceeds remaining budget 0" } }
+      ]
+    },
+    {
+      "id": "non-positive-amount",
+      "why": "Zero is refused before any cap arithmetic, and the raw string is echoed back.",
+      "policy": { "maxAmountPerRequest": "5000", "totalBudget": "100000" },
+      "steps": [
+        { "amount": "0", "expect": { "decision": "deny", "remaining": "100000", "reason": "non-positive amount: 0" } }
+      ]
+    },
+    {
+      "id": "host-allow-list",
+      "why": "The host gate runs before the cap gate, so an over-cap amount still reports the host.",
+      "policy": { "maxAmountPerRequest": "5000", "totalBudget": "100000", "allowHosts": ["telemetry.local"] },
+      "steps": [
+        { "amount": "9999", "host": "evil.local", "expect": { "decision": "deny", "remaining": "100000", "reason": "host not allowed: evil.local" } },
+        { "amount": "5000", "expect": { "decision": "allow", "remaining": "95000", "reason": "" } }
+      ]
+    },
+    {
+      "id": "payto-allow-list",
+      "why": "payTo is compared case-insensitively but echoed back exactly as the seller sent it.",
+      "policy": {
+        "maxAmountPerRequest": "5000",
+        "totalBudget": "100000",
+        "allowPayTo": ["0xabcdef0000000000000000000000000000000042"]
+      },
+      "steps": [
+        { "amount": "1000", "payTo": "0xDeadBeef00000000000000000000000000000001", "expect": { "decision": "deny", "remaining": "100000", "reason": "payTo not allowed: 0xDeadBeef00000000000000000000000000000001" } },
+        { "amount": "1000", "expect": { "decision": "allow", "remaining": "99000", "reason": "" } }
+      ]
+    }
+  ]
+}
