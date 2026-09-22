@@ -583,15 +583,16 @@ class X402Client:
         """Returns {reqs, raws, version, resource, error}."""
         get = lambda h: headers.get(h) or headers.get(h.title()) or headers.get(h.upper())
 
+        # MPP is a different protocol. Servers often offer it alongside x402, so it only
+        # decides the outcome when no x402 challenge is present.
         wa = get("www-authenticate")
-        if wa and wa.strip().lower().startswith("payment"):
-            return {"reqs": [], "raws": [], "version": 1,
-                    "error": "MPP challenge (WWW-Authenticate: Payment); this client speaks x402 only"}
+        mpp = bool(wa and wa.strip().lower().startswith("payment"))
 
-        pr = get("payment-required")               # x402 v2
+        pr = get("payment-required")               # x402 v2: base64 JSON per the spec, plain JSON accepted
         if pr:
             try:
-                j = json.loads(pr)
+                t = pr.strip()
+                j = json.loads(t if t.startswith("{") else base64.b64decode(t).decode("utf-8"))
                 raws = list(j.get("accepts") or [])
                 if raws:
                     return {"reqs": [self._as_requirement(a) for a in raws], "raws": raws,
@@ -611,6 +612,9 @@ class X402Client:
                         "version": 2 if ver == 2 else 1, "resource": j.get("resource"), "error": None}
         except Exception:
             pass
+        if mpp:
+            return {"reqs": [], "raws": [], "version": 1,
+                    "error": "MPP challenge (WWW-Authenticate: Payment); this client speaks x402 only"}
         return {"reqs": [], "raws": [], "version": 1, "error": None}
 
     def _pick(self, reqs: List[dict], host: str) -> Tuple[Optional[dict], int, str]:

@@ -409,18 +409,21 @@ const asRequirement = (a: any): Requirement => ({
 async function parse402(res: Response): Promise<Parsed> {
   const out: Requirement[] = [], raws: any[] = [];
 
-  // MPP ('WWW-Authenticate: Payment ...') is a DIFFERENT protocol - AgentCore speaks both.
-  // Decline loudly rather than sending an x402 envelope a Payment-scheme server will reject.
+  // MPP ('WWW-Authenticate: Payment ...') is a DIFFERENT protocol. Servers often offer it
+  // alongside x402, so it only decides the outcome when no x402 challenge is present.
   const wa = res.headers.get('www-authenticate');
-  if (wa && /^\s*Payment[\s,]/i.test(wa)) {
-    return { reqs: [], raws: [], version: 1, error: 'MPP challenge (WWW-Authenticate: Payment); this client speaks x402 only' };
-  }
+  const mpp = Boolean(wa && /^\s*Payment[\s,]/i.test(wa));
+  const mppOnly = (p: Parsed): Parsed => (mpp && !p.reqs.length && !p.error)
+    ? { reqs: [], raws: [], version: 1, error: 'MPP challenge (WWW-Authenticate: Payment); this client speaks x402 only' }
+    : p;
 
-  // --- v2: everything protocol-level lives in the PAYMENT-REQUIRED header
+  // --- v2: everything protocol-level lives in the PAYMENT-REQUIRED header, base64-encoded
+  // JSON per the spec (plain JSON is accepted too).
   const pr = res.headers.get('payment-required');
   if (pr) {
     try {
-      const j = JSON.parse(pr);
+      const t = pr.trim();
+      const j = JSON.parse(t.startsWith('{') ? t : atob(t));
       for (const a of (j?.accepts ?? [])) { out.push(asRequirement(a)); raws.push(a); }
       if (out.length) return { reqs: out, raws, version: 2, resource: j?.resource };
     } catch { /* malformed - fall through */ }
@@ -461,7 +464,7 @@ async function parse402(res: Response): Promise<Parsed> {
       if (out.length && ver === 2) return { reqs: out, raws, version: 2, resource: b?.resource };
     } catch { /* no body requirements */ }
   }
-  return { reqs: out, raws, version: 1 };
+  return mppOnly({ reqs: out, raws, version: 1 });
 }
 
 /* ============================== the wrapper ============================== */

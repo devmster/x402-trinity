@@ -40,7 +40,7 @@ import { mkdirSync } from 'node:fs';
 import { createRpc, selector } from '../dist/evm-tx.js';
 
 const { toBig, CHAINS } = __internals;
-const VERSION = '0.2.2';   // keep in step with package.json
+const VERSION = '0.2.3';   // keep in step with package.json
 const PROTOCOL = '2025-06-18';
 
 const log = (...a) => process.stderr.write('[x402-trinity] ' + a.join(' ') + '\n');
