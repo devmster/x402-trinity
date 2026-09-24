@@ -9,6 +9,19 @@ Zero runtime dependencies. 7 KB gzipped. Buyer *and* seller in TypeScript; buyer
 npm install x402-trinity
 ```
 
+## Copy-paste setup
+
+A ready-made brief for your coding agent. Paste it in and it does the install, the wallet, your
+spending limits, the price check and the purchase &mdash; you just say what you are buying and what
+it may spend.
+
+**&rarr; [Standard Purchase Harness](https://x402trinity.com/purchase)**
+
+Buying from a paid API, a dataset, a file, or another agent's service &mdash; anything that answers
+HTTP 402.
+
+More setups, and a marketplace for you to earn for your products or buy from the marketplace, at **[x402trinity.com](https://x402trinity.com)**.
+
 ## Why
 
 When an agent hits a paid resource it gets `402 Payment Required`. Without something to
